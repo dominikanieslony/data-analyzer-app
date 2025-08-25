@@ -81,7 +81,7 @@ def format_pct(x):
         return ""
     return f"{x:.2f}%"
 
-def style_expected_colors(df: pd.DataFrame) -> pd.io.formats.style.Styler:
+def style_expected_colors(df: pd.DataFrame):
     def color_row(row):
         val = row.get("% Expected Demand", np.nan)
         color = ""
