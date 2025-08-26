@@ -4,11 +4,18 @@ from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
+
+# Kompatybilność Styler dla Pandas 1.x i 2.x
+try:
+    from pandas import Styler
+except ImportError:
+    import pandas.io.formats.style
+    Styler = pandas.io.formats.style.Styler
+
 import streamlit as st
 import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Country CSV Analyzer", layout="wide")
-
 st.title("📊 Country CSV Analyzer (DE / NL / PL)")
 
 st.markdown(
@@ -28,7 +35,6 @@ COUNTRY_CODES = {
 }
 
 def detect_country_from_filename(name: str) -> Optional[str]:
-    """Return country code 'DE' | 'NL' | 'PL' if present in filename, else None."""
     upper = name.upper()
     for code in COUNTRY_CODES.keys():
         if re.search(rf"(^|[^A-Z]){code}([^A-Z]|$)", upper):
@@ -36,7 +42,6 @@ def detect_country_from_filename(name: str) -> Optional[str]:
     return None
 
 def read_csv_safely(file) -> pd.DataFrame:
-    """Try to load CSV with automatic delimiter detection and utf-8/similar fallbacks."""
     content = file.read()
     file.seek(0)
     sample = content[:2048].decode(errors="ignore")
@@ -62,10 +67,7 @@ def to_number(s):
         return np.nan
     if isinstance(s, (int, float, np.number)):
         return float(s)
-    s = str(s).strip()
-    s = s.replace("€", "").replace(" ", "").replace("\xa0", "")
-    s = s.replace(",", ".")
-    s = s.replace("%", "")
+    s = str(s).strip().replace("€", "").replace(" ", "").replace("\xa0", "").replace(",", ".").replace("%", "")
     try:
         return float(s)
     except Exception:
@@ -86,10 +88,7 @@ def style_expected_colors(df: pd.DataFrame):
         val = row.get("% Expected Demand", np.nan)
         color = ""
         if pd.notna(val):
-            if val >= 0:
-                color = "background-color: rgba(0, 170, 0, 0.15);"
-            else:
-                color = "background-color: rgba(220, 20, 60, 0.15);"
+            color = "background-color: rgba(0, 170, 0, 0.15);" if val >= 0 else "background-color: rgba(220, 20, 60, 0.15);"
         return [color if c == "Expected Demand" else "" for c in df.columns]
     return df.style.apply(color_row, axis=1)
 
@@ -116,7 +115,7 @@ def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.sort_values("Demand", ascending=False).reset_index(drop=True)
     return df
 
-def styled_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
+def styled_table(df: pd.DataFrame) -> 'Styler':
     styler = style_expected_colors(df)
     currency_cols = [c for c in ["Demand", "Demand Diff to Expected", "Expected Demand"] if c in df.columns]
     percent_cols = [c for c in ["% Expected Demand", "CVR"] if c in df.columns]
