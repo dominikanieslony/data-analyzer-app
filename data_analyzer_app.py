@@ -33,28 +33,26 @@ def detect_country_from_filename(name: str) -> Optional[str]:
     return None
 
 def read_csv_safely(file) -> pd.DataFrame:
-    # Read the entire file content
+    # Read the file content
     content = file.getvalue().decode('utf-8')
     
-    # For DE files, we know they are tab-separated with European number format
-    if "DE" in file.name.upper():
-        # Read as tab-separated
-        df = pd.read_csv(io.StringIO(content), sep='\t', thousands='.', decimal=',')
-        return df
-    else:
-        # For other countries, try to detect separator
-        sample = content[:2048]
-        sep_candidates = [",", ";", "\t", "|"]
-        best_sep = ","
-        best_hits = 0
-        for sep in sep_candidates:
-            hits = sample.count(sep)
-            if hits > best_hits:
-                best_hits = hits
-                best_sep = sep
-        
-        df = pd.read_csv(io.StringIO(content), sep=best_sep)
-        return df
+    # Manual parsing for tab-separated files
+    lines = content.strip().split('\n')
+    
+    # Get headers from first line
+    headers = lines[0].strip().split('\t')
+    
+    # Parse data rows
+    data = []
+    for line in lines[1:]:
+        if line.strip():
+            row = line.strip().split('\t')
+            data.append(row)
+    
+    # Create DataFrame
+    df = pd.DataFrame(data, columns=headers)
+    
+    return df
 
 def to_number(s):
     if pd.isna(s):
@@ -68,21 +66,15 @@ def to_number(s):
     # Remove currency symbols, spaces, and percentage signs
     s = s.replace("€", "").replace(" ", "").replace("\xa0", "").replace("%", "")
     
-    # Handle European number format: 20.265 -> 20265, 3,25 -> 3.25
+    # Handle European number format (20.265 -> 20265, 3,25 -> 3.25)
     if "." in s and "," in s:
         # Format like 20.265,50 -> 20265.50
         s = s.replace(".", "").replace(",", ".")
-    elif "." in s and s.count(".") == 1:
-        # Single dot, could be decimal or thousand separator
-        parts = s.split(".")
-        if len(parts) == 2 and len(parts[1]) <= 2:
-            # Probably decimal like 3.25
-            s = s.replace(".", "")
-        else:
-            # Probably thousand separator like 20.265
-            s = s.replace(".", "")
+    elif "." in s:
+        # Thousand separator like 20.265 -> 20265
+        s = s.replace(".", "")
     elif "," in s:
-        # Comma as decimal separator
+        # Decimal separator like 3,25 -> 3.25
         s = s.replace(",", ".")
     
     try:
@@ -93,6 +85,7 @@ def to_number(s):
 def format_eur(x):
     if pd.isna(x):
         return ""
+    # Format as European style: €20.265,00
     return f"€{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def format_pct(x):
@@ -209,11 +202,15 @@ if uploaded_files:
             st.warning(f"⚠️ Skipped file **{f.name}** – missing country code (DE/NL/PL) in the filename.")
             continue
         try:
-            # Debug: show raw content
             st.write(f"### Processing file: {f.name}")
+            
+            # Read and display raw content for debugging
+            content = f.getvalue().decode('utf-8')
+            st.text_area("Raw file content (first 500 chars):", content[:500], height=150)
             
             df = read_csv_safely(f)
             st.write("**Columns detected:**", list(df.columns))
+            st.write("**Data types:**", df.dtypes.to_dict())
             st.write("**First 2 rows:**")
             st.dataframe(df.head(2))
             
