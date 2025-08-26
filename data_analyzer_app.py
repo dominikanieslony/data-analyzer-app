@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+from pandas.io.formats.style import Styler  # ✅ poprawny import
 
 st.set_page_config(page_title="Country CSV Analyzer", layout="wide")
 
@@ -28,7 +29,6 @@ COUNTRY_CODES = {
 }
 
 def detect_country_from_filename(name: str) -> Optional[str]:
-    """Return country code 'DE' | 'NL' | 'PL' if present in filename, else None."""
     upper = name.upper()
     for code in COUNTRY_CODES.keys():
         if re.search(rf"(^|[^A-Z]){code}([^A-Z]|$)", upper):
@@ -36,22 +36,23 @@ def detect_country_from_filename(name: str) -> Optional[str]:
     return None
 
 def read_csv_safely(file) -> pd.DataFrame:
-    """Try to load CSV with automatic delimiter detection and encoding fallbacks."""
+    """Load CSV with auto separator detection and encoding fallbacks (UTF-16 supported)."""
     content = file.read()
     file.seek(0)
-    # próbujemy UTF-8, UTF-8-SIG, Latin-1, UTF-16
+
     encodings = ["utf-8", "utf-8-sig", "latin-1", "utf-16"]
     sep_candidates = [",", ";", "\t", "|"]
-    
-    # próbujemy wykryć separator z pierwszych kilku kb
-    sample = content[:2048].decode("utf-8", errors="ignore")
-    best_sep = ","
-    best_hits = 0
+
+    # próbujemy oszacować separator
+    try:
+        sample = content[:2048].decode("utf-8", errors="ignore")
+    except Exception:
+        sample = ""
+    best_sep, best_hits = ",", 0
     for sep in sep_candidates:
         hits = sample.count(sep)
         if hits > best_hits:
-            best_hits = hits
-            best_sep = sep
+            best_sep, best_hits = sep, hits
 
     for enc in encodings:
         file.seek(0)
@@ -60,7 +61,7 @@ def read_csv_safely(file) -> pd.DataFrame:
         except Exception:
             continue
 
-    # jeśli wszystkie nie przeszły, próbujemy UTF-16 z silnikiem 'python'
+    # fallback: UTF-16 z tabulatorem
     file.seek(0)
     return pd.read_csv(file, sep="\t", encoding="utf-16", engine="python")
 
@@ -89,16 +90,15 @@ def format_pct(x):
     return f"{x:.2f}%"
 
 def style_expected_colors(df: pd.DataFrame):
-    def color_row(row):
-        val = row.get("% Expected Demand", np.nan)
-        color = ""
-        if pd.notna(val):
-            if val >= 0:
-                color = "background-color: rgba(0, 170, 0, 0.15);"
-            else:
-                color = "background-color: rgba(220, 20, 60, 0.15);"
-        return [color if c == "Expected Demand" else "" for c in df.columns]
-    return df.style.apply(color_row, axis=1)
+    def color_expected(val):
+        if pd.isna(val):
+            return ""
+        if val >= 0:
+            return "background-color: rgba(0, 170, 0, 0.15);"
+        return "background-color: rgba(220, 20, 60, 0.15);"
+    if "% Expected Demand" in df.columns:
+        return df.style.applymap(color_expected, subset=["% Expected Demand"])
+    return df.style
 
 def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns={c: c.strip() for c in df.columns})
@@ -123,7 +123,7 @@ def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.sort_values("Demand", ascending=False).reset_index(drop=True)
     return df
 
-def styled_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
+def styled_table(df: pd.DataFrame) -> Styler:
     styler = style_expected_colors(df)
     currency_cols = [c for c in ["Demand", "Demand Diff to Expected", "Expected Demand"] if c in df.columns]
     percent_cols = [c for c in ["% Expected Demand", "CVR"] if c in df.columns]
@@ -155,7 +155,7 @@ def pie_not_achieved(df: pd.DataFrame):
     labels = ["Did not reach plan", "Reached/Exceeded plan"]
     sizes = [below, at_or_above]
     fig, ax = plt.subplots()
-    ax.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=90)
+    ax.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=90, colors=["crimson", "seagreen"])
     ax.axis("equal")
     st.pyplot(fig)
 
@@ -168,7 +168,7 @@ def pie_demand_vs_expected(df: pd.DataFrame):
     labels = ["Total Demand", "Total Expected Demand"]
     sizes = [total_demand, total_expected]
     fig, ax = plt.subplots()
-    ax.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=90)
+    ax.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=90, colors=["dodgerblue", "orange"])
     ax.axis("equal")
     st.pyplot(fig)
 
@@ -230,4 +230,4 @@ with col2:
     st.subheader("Share: Demand vs Expected Demand (total)")
     pie_demand_vs_expected(df_country)
 
-st.caption("Note: colors in **Expected Demand** reflect the sign of **% Expected Demand** (green = positive, red = negative).")
+st.caption("Note: colors in **% Expected Demand** reflect performance (green = positive, red = negative).")
