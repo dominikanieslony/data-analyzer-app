@@ -1,21 +1,9 @@
 import io
 import re
-from typing import Dict, Optional, Union
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
-
-# More compatible way to handle Styler import
-try:
-    from pandas.io.formats.style import Styler
-except ImportError:
-    # For older pandas versions
-    try:
-        from pandas import Styler
-    except ImportError:
-        # Fallback for very old versions
-        Styler = type(pd.DataFrame().style)
-
 import streamlit as st
 import matplotlib.pyplot as plt
 
@@ -119,7 +107,8 @@ def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.sort_values("Demand", ascending=False).reset_index(drop=True)
     return df
 
-def styled_table(df: pd.DataFrame) -> Styler:
+# FIXED: Remove the problematic type annotation
+def styled_table(df: pd.DataFrame):
     styler = style_expected_colors(df)
     currency_cols = [c for c in ["Demand", "Demand Diff to Expected", "Expected Demand"] if c in df.columns]
     percent_cols = [c for c in ["% Expected Demand", "CVR"] if c in df.columns]
@@ -174,7 +163,7 @@ uploaded_files = st.file_uploader(
     "Upload one or more CSV files", type=["csv"], accept_multiple_files=True
 )
 
-countries_data: Dict[str, list[pd.DataFrame]] = {"DE": [], "NL": [], "PL": []}
+countries_data: Dict[str, list] = {"DE": [], "NL": [], "PL": []}
 
 if uploaded_files:
     for f in uploaded_files:
