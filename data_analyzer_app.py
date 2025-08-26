@@ -1,7 +1,6 @@
 import io
 import re
 from typing import Dict, Optional
-
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -34,55 +33,58 @@ def detect_country_from_filename(name: str) -> Optional[str]:
     return None
 
 def read_csv_safely(file) -> pd.DataFrame:
-    content = file.read()
-    file.seek(0)
+    # Read the entire file content
+    content = file.getvalue().decode('utf-8')
     
-    # For files with "DE" in name, assume tab-separated
+    # For DE files, we know they are tab-separated with European number format
     if "DE" in file.name.upper():
-        try:
-            # First try tab separator with standard encoding
-            df = pd.read_csv(file, sep='\t', encoding='utf-8')
-            file.seek(0)
-            return df
-        except:
-            try:
-                # Try with different encodings
-                file.seek(0)
-                df = pd.read_csv(file, sep='\t', encoding='latin-1')
-                file.seek(0)
-                return df
-            except:
-                # Final fallback
-                file.seek(0)
-                return pd.read_csv(file, sep='\t', engine="python", encoding_errors="ignore")
-    
-    # For other files, use the original logic
-    sample = content[:2048].decode(errors="ignore")
-    sep_candidates = [",", ";", "\t", "|"]
-    best_sep = ","
-    best_hits = 0
-    for sep in sep_candidates:
-        hits = sample.count(sep)
-        if hits > best_hits:
-            best_hits = hits
-            best_sep = sep
-    
-    for enc in ["utf-8", "utf-8-sig", "latin-1"]:
-        file.seek(0)
-        try:
-            df = pd.read_csv(file, sep=best_sep, encoding=enc)
-            return df
-        except Exception:
-            continue
-    
-    return pd.read_csv(io.BytesIO(content), sep=best_sep, engine="python", encoding_errors="ignore")
+        # Read as tab-separated
+        df = pd.read_csv(io.StringIO(content), sep='\t', thousands='.', decimal=',')
+        return df
+    else:
+        # For other countries, try to detect separator
+        sample = content[:2048]
+        sep_candidates = [",", ";", "\t", "|"]
+        best_sep = ","
+        best_hits = 0
+        for sep in sep_candidates:
+            hits = sample.count(sep)
+            if hits > best_hits:
+                best_hits = hits
+                best_sep = sep
+        
+        df = pd.read_csv(io.StringIO(content), sep=best_sep)
+        return df
 
 def to_number(s):
     if pd.isna(s):
         return np.nan
     if isinstance(s, (int, float, np.number)):
         return float(s)
-    s = str(s).strip().replace("€", "").replace(" ", "").replace("\xa0", "").replace(",", "").replace("%", "")
+    
+    # Handle string values
+    s = str(s).strip()
+    
+    # Remove currency symbols, spaces, and percentage signs
+    s = s.replace("€", "").replace(" ", "").replace("\xa0", "").replace("%", "")
+    
+    # Handle European number format: 20.265 -> 20265, 3,25 -> 3.25
+    if "." in s and "," in s:
+        # Format like 20.265,50 -> 20265.50
+        s = s.replace(".", "").replace(",", ".")
+    elif "." in s and s.count(".") == 1:
+        # Single dot, could be decimal or thousand separator
+        parts = s.split(".")
+        if len(parts) == 2 and len(parts[1]) <= 2:
+            # Probably decimal like 3.25
+            s = s.replace(".", "")
+        else:
+            # Probably thousand separator like 20.265
+            s = s.replace(".", "")
+    elif "," in s:
+        # Comma as decimal separator
+        s = s.replace(",", ".")
+    
     try:
         return float(s)
     except Exception:
@@ -91,12 +93,12 @@ def to_number(s):
 def format_eur(x):
     if pd.isna(x):
         return ""
-    return f"€{x:,.2f}"
+    return f"€{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def format_pct(x):
     if pd.isna(x):
         return ""
-    return f"{x:.2f}%"
+    return f"{x:.2f}%".replace(".", ",")
 
 def style_expected_colors(df: pd.DataFrame):
     def color_row(row):
@@ -108,20 +110,22 @@ def style_expected_colors(df: pd.DataFrame):
     return df.style.apply(color_row, axis=1)
 
 def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
-    # First, clean column names
+    # Clean column names
     df = df.rename(columns={c: c.strip() for c in df.columns})
     
-    # Convert all numeric columns
-    numeric_columns = ["Visits", "Orders", "Demand", "Expected Demand", "Demand Diff to Expected", 
-                       "CVR", "AOV", "Median Order Value", "BA", "Position First Day", 
-                       "Position All", "% Expected Demand", "CVR Category Avg Diff", 
-                       "CVR Channel Avg Diff", "CVR Category by Channel Avg Diff"]
+    # Convert all potential numeric columns
+    numeric_columns = [
+        "Visits", "Orders", "Demand", "Expected Demand", "Demand Diff to Expected",
+        "CVR", "AOV", "Median Order Value", "BA", "Position First Day", 
+        "Position All", "% Expected Demand", "CVR Category Avg Diff", 
+        "CVR Channel Avg Diff", "CVR Category by Channel Avg Diff"
+    ]
     
     for col in numeric_columns:
         if col in df.columns:
             df[col] = df[col].apply(to_number)
     
-    # Calculate missing columns if needed
+    # Calculate missing columns
     if "% Expected Demand" not in df.columns and {"Demand", "Expected Demand"}.issubset(df.columns):
         with np.errstate(divide="ignore", invalid="ignore"):
             df["% Expected Demand"] = (df["Demand"] - df["Expected Demand"]) / df["Expected Demand"] * 100
@@ -205,21 +209,57 @@ if uploaded_files:
             st.warning(f"⚠️ Skipped file **{f.name}** – missing country code (DE/NL/PL) in the filename.")
             continue
         try:
+            # Debug: show raw content
+            st.write(f"### Processing file: {f.name}")
+            
             df = read_csv_safely(f)
-            st.write(f"File: {f.name}")
-            st.write(f"Columns detected: {list(df.columns)}")
-            st.write(f"First few rows:")
-            st.dataframe(df.head(3))
+            st.write("**Columns detected:**", list(df.columns))
+            st.write("**First 2 rows:**")
+            st.dataframe(df.head(2))
             
             df = ensure_required_columns(df)
             countries_data[code].append(df)
+            
         except Exception as e:
-            st.error(f"Could not load file **{f.name}**: {e}")
-            st.error(f"Error details: {str(e)}")
+            st.error(f"Could not load file **{f.name}**: {str(e)}")
+            import traceback
+            st.error(f"Traceback: {traceback.format_exc()}")
 
 available_codes = [code for code, lst in countries_data.items() if len(lst) > 0]
 if not available_codes:
     st.info("No data uploaded yet. Upload CSV files with a country code in the filename, e.g. `banners_DE.csv`.")
     st.stop()
 
-# Rest of the code remains the same...
+# Country selector
+code_to_show = st.selectbox(
+    "Select country for analysis",
+    options=available_codes,
+    format_func=lambda c: f"{COUNTRY_CODES.get(c, c)} ({c})",
+)
+
+dfs = countries_data.get(code_to_show, [])
+if not dfs:
+    st.warning("No data for the selected country.")
+    st.stop()
+
+df_country = pd.concat(dfs, ignore_index=True)
+
+st.subheader(f"Data – {COUNTRY_CODES.get(code_to_show, code_to_show)} ({code_to_show})")
+
+styler = styled_table(df_country.copy())
+st.dataframe(styler, use_container_width=True, height=480)
+
+summary_df = add_summary_row(df_country.copy())
+summary_styler = styled_table(summary_df.copy())
+st.dataframe(summary_styler, use_container_width=True, height=70)
+
+st.markdown("---")
+col1, col2 = st.columns(2)
+with col1:
+    st.subheader("Share of banners that did not reach the plan")
+    pie_not_achieved(df_country)
+with col2:
+    st.subheader("Share: Demand vs Expected Demand (total)")
+    pie_demand_vs_expected(df_country)
+
+st.caption("Note: colors in **Expected Demand** reflect the sign of **% Expected Demand** (green = positive, red = negative).")
