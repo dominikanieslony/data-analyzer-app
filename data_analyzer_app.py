@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
-from pandas.io.formats.style import Styler  # ✅ poprawny import
 
 st.set_page_config(page_title="Country CSV Analyzer", layout="wide")
 
@@ -28,14 +27,14 @@ COUNTRY_CODES = {
     "PL": "Poland",
 }
 
-def detect_country_from_filename(name: str) -> Optional[str]:
+def detect_country_from_filename(name):
     upper = name.upper()
     for code in COUNTRY_CODES.keys():
         if re.search(rf"(^|[^A-Z]){code}([^A-Z]|$)", upper):
             return code
     return None
 
-def read_csv_safely(file) -> pd.DataFrame:
+def read_csv_safely(file):
     """Load CSV with auto separator detection and encoding fallbacks (UTF-16 supported)."""
     content = file.read()
     file.seek(0)
@@ -43,7 +42,6 @@ def read_csv_safely(file) -> pd.DataFrame:
     encodings = ["utf-8", "utf-8-sig", "latin-1", "utf-16"]
     sep_candidates = [",", ";", "\t", "|"]
 
-    # próbujemy oszacować separator
     try:
         sample = content[:2048].decode("utf-8", errors="ignore")
     except Exception:
@@ -61,7 +59,6 @@ def read_csv_safely(file) -> pd.DataFrame:
         except Exception:
             continue
 
-    # fallback: UTF-16 z tabulatorem
     file.seek(0)
     return pd.read_csv(file, sep="\t", encoding="utf-16", engine="python")
 
@@ -89,7 +86,7 @@ def format_pct(x):
         return ""
     return f"{x:.2f}%"
 
-def style_expected_colors(df: pd.DataFrame):
+def style_expected_colors(df):
     def color_expected(val):
         if pd.isna(val):
             return ""
@@ -100,7 +97,7 @@ def style_expected_colors(df: pd.DataFrame):
         return df.style.applymap(color_expected, subset=["% Expected Demand"])
     return df.style
 
-def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
+def ensure_required_columns(df):
     df = df.rename(columns={c: c.strip() for c in df.columns})
     for col in ["Visits", "Demand", "Expected Demand", "% Expected Demand", "CVR", "Demand Diff to Expected"]:
         if col in df.columns:
@@ -123,7 +120,7 @@ def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.sort_values("Demand", ascending=False).reset_index(drop=True)
     return df
 
-def styled_table(df: pd.DataFrame) -> Styler:
+def styled_table(df):
     styler = style_expected_colors(df)
     currency_cols = [c for c in ["Demand", "Demand Diff to Expected", "Expected Demand"] if c in df.columns]
     percent_cols = [c for c in ["% Expected Demand", "CVR"] if c in df.columns]
@@ -134,7 +131,7 @@ def styled_table(df: pd.DataFrame) -> Styler:
     styler = styler.set_properties(**{"text-align": "right"})
     return styler
 
-def add_summary_row(df: pd.DataFrame) -> pd.DataFrame:
+def add_summary_row(df):
     row = {c: "" for c in df.columns}
     if "Visits" in df.columns:
         row["Visits"] = df["Visits"].mean(skipna=True)
@@ -146,7 +143,7 @@ def add_summary_row(df: pd.DataFrame) -> pd.DataFrame:
         row[df.columns[0]] = "Average"
     return pd.DataFrame([row], columns=df.columns)
 
-def pie_not_achieved(df: pd.DataFrame):
+def pie_not_achieved(df):
     if "% Expected Demand" not in df.columns:
         st.info("Missing column '% Expected Demand' – cannot calculate banner achievement.")
         return
@@ -159,7 +156,7 @@ def pie_not_achieved(df: pd.DataFrame):
     ax.axis("equal")
     st.pyplot(fig)
 
-def pie_demand_vs_expected(df: pd.DataFrame):
+def pie_demand_vs_expected(df):
     if not {"Demand", "Expected Demand"}.issubset(df.columns):
         st.info("Missing 'Demand' or 'Expected Demand' columns – cannot show demand vs expected share.")
         return
@@ -178,7 +175,7 @@ uploaded_files = st.file_uploader(
     "Upload one or more CSV files", type=["csv"], accept_multiple_files=True
 )
 
-countries_data: Dict[str, list[pd.DataFrame]] = {"DE": [], "NL": [], "PL": []}
+countries_data: Dict[str, list] = {"DE": [], "NL": [], "PL": []}
 
 if uploaded_files:
     for f in uploaded_files:
