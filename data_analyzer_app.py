@@ -107,7 +107,7 @@ def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.sort_values("Demand", ascending=False).reset_index(drop=True)
     return df
 
-# FIXED: Remove the problematic type annotation
+# REMOVED THE PROBLEMATIC TYPE ANNOTATION COMPLETELY
 def styled_table(df: pd.DataFrame):
     styler = style_expected_colors(df)
     currency_cols = [c for c in ["Demand", "Demand Diff to Expected", "Expected Demand"] if c in df.columns]
