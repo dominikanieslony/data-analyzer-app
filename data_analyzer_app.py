@@ -36,11 +36,15 @@ def detect_country_from_filename(name: str) -> Optional[str]:
     return None
 
 def read_csv_safely(file) -> pd.DataFrame:
-    """Try to load CSV with automatic delimiter detection and utf-8/similar fallbacks."""
+    """Try to load CSV with automatic delimiter detection and encoding fallbacks."""
     content = file.read()
     file.seek(0)
-    sample = content[:2048].decode(errors="ignore")
+    # próbujemy UTF-8, UTF-8-SIG, Latin-1, UTF-16
+    encodings = ["utf-8", "utf-8-sig", "latin-1", "utf-16"]
     sep_candidates = [",", ";", "\t", "|"]
+    
+    # próbujemy wykryć separator z pierwszych kilku kb
+    sample = content[:2048].decode("utf-8", errors="ignore")
     best_sep = ","
     best_hits = 0
     for sep in sep_candidates:
@@ -48,14 +52,17 @@ def read_csv_safely(file) -> pd.DataFrame:
         if hits > best_hits:
             best_hits = hits
             best_sep = sep
-    for enc in ["utf-8", "utf-8-sig", "latin-1"]:
+
+    for enc in encodings:
         file.seek(0)
         try:
-            df = pd.read_csv(file, sep=best_sep, encoding=enc)
-            return df
+            return pd.read_csv(file, sep=best_sep, encoding=enc)
         except Exception:
             continue
-    return pd.read_csv(io.BytesIO(content), sep=best_sep, engine="python", encoding_errors="ignore")
+
+    # jeśli wszystkie nie przeszły, próbujemy UTF-16 z silnikiem 'python'
+    file.seek(0)
+    return pd.read_csv(file, sep="\t", encoding="utf-16", engine="python")
 
 def to_number(s):
     if pd.isna(s):
