@@ -36,23 +36,47 @@ def detect_country_from_filename(name: str) -> Optional[str]:
 def read_csv_safely(file) -> pd.DataFrame:
     content = file.read()
     file.seek(0)
+    
+    # Try to detect if it's tab-separated first
     sample = content[:2048].decode(errors="ignore")
-    sep_candidates = [",", ";", "\t", "|"]
-    best_sep = ","
-    best_hits = 0
-    for sep in sep_candidates:
-        hits = sample.count(sep)
-        if hits > best_hits:
-            best_hits = hits
-            best_sep = sep
+    
+    # Count tabs and commas to determine the best separator
+    tab_count = sample.count('\t')
+    comma_count = sample.count(',')
+    
+    # Prioritize tabs if they are more common than commas
+    if tab_count > comma_count and tab_count > 0:
+        best_sep = '\t'
+    else:
+        # Fall back to the original logic
+        sep_candidates = [",", ";", "\t", "|"]
+        best_sep = ","
+        best_hits = 0
+        for sep in sep_candidates:
+            hits = sample.count(sep)
+            if hits > best_hits:
+                best_hits = hits
+                best_sep = sep
+    
+    # Try different encodings
     for enc in ["utf-8", "utf-8-sig", "latin-1"]:
         file.seek(0)
         try:
-            df = pd.read_csv(file, sep=best_sep, encoding=enc)
+            df = pd.read_csv(file, sep=best_sep, encoding=enc, thousands='.', decimal=',')
+            # If we only got one column, try tab separation
+            if len(df.columns) == 1 and best_sep != '\t':
+                file.seek(0)
+                df = pd.read_csv(file, sep='\t', encoding=enc, thousands='.', decimal=',')
             return df
         except Exception:
             continue
-    return pd.read_csv(io.BytesIO(content), sep=best_sep, engine="python", encoding_errors="ignore")
+    
+    # Final fallback
+    file.seek(0)
+    try:
+        return pd.read_csv(io.BytesIO(content), sep='\t', engine="python", encoding_errors="ignore", thousands='.', decimal=',')
+    except:
+        return pd.read_csv(io.BytesIO(content), sep=best_sep, engine="python", encoding_errors="ignore", thousands='.', decimal=',')
 
 def to_number(s):
     if pd.isna(s):
@@ -86,15 +110,19 @@ def style_expected_colors(df: pd.DataFrame):
 
 def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns={c: c.strip() for c in df.columns})
-    for col in ["Visits", "Demand", "Expected Demand", "% Expected Demand", "CVR", "Demand Diff to Expected"]:
+    for col in ["Visits", "Orders", "Demand", "Expected Demand", "% Expected Demand", "CVR", "Demand Diff to Expected", "AOV", "Median Order Value", "BA"]:
         if col in df.columns:
             df[col] = df[col].map(to_number)
+    
+    # Calculate missing columns if needed
     if "% Expected Demand" not in df.columns and {"Demand", "Expected Demand"}.issubset(df.columns):
         with np.errstate(divide="ignore", invalid="ignore"):
             df["% Expected Demand"] = (df["Demand"] - df["Expected Demand"]) / df["Expected Demand"] * 100
-    if "CVR" not in df.columns and {"Demand", "Visits"}.issubset(df.columns):
+    
+    if "CVR" not in df.columns and {"Orders", "Visits"}.issubset(df.columns):
         with np.errstate(divide="ignore", invalid="ignore"):
-            df["CVR"] = (df["Demand"] / df["Visits"]) * 100
+            df["CVR"] = (df["Orders"] / df["Visits"]) * 100
+    
     if {"Demand", "Expected Demand"}.issubset(df.columns):
         base_diff = df["Demand"] - df["Expected Demand"]
         if "% Expected Demand" in df.columns:
@@ -103,32 +131,36 @@ def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
             df["Demand Diff to Expected"] = np.abs(base_diff) * sign
         else:
             df["Demand Diff to Expected"] = base_diff
+    
     if "Demand" in df.columns:
         df = df.sort_values("Demand", ascending=False).reset_index(drop=True)
+    
     return df
 
-# REMOVED THE PROBLEMATIC TYPE ANNOTATION COMPLETELY
 def styled_table(df: pd.DataFrame):
     styler = style_expected_colors(df)
-    currency_cols = [c for c in ["Demand", "Demand Diff to Expected", "Expected Demand"] if c in df.columns]
-    percent_cols = [c for c in ["% Expected Demand", "CVR"] if c in df.columns]
+    currency_cols = [c for c in ["Demand", "Demand Diff to Expected", "Expected Demand", "AOV", "Median Order Value"] if c in df.columns]
+    percent_cols = [c for c in ["% Expected Demand", "CVR", "BA"] if c in df.columns]
+    
     if currency_cols:
         styler = styler.format({c: format_eur for c in currency_cols})
     if percent_cols:
         styler = styler.format({c: format_pct for c in percent_cols})
+    
     styler = styler.set_properties(**{"text-align": "right"})
     return styler
 
 def add_summary_row(df: pd.DataFrame) -> pd.DataFrame:
     row = {c: "" for c in df.columns}
-    if "Visits" in df.columns:
-        row["Visits"] = df["Visits"].mean(skipna=True)
-    if "Demand" in df.columns:
-        row["Demand"] = df["Demand"].mean(skipna=True)
-    if "CVR" in df.columns:
-        row["CVR"] = df["CVR"].mean(skipna=True)
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    
+    for col in numeric_cols:
+        if col in df.columns:
+            row[col] = df[col].mean(skipna=True)
+    
     if df.columns[0] not in ["", None]:
         row[df.columns[0]] = "Average"
+    
     return pd.DataFrame([row], columns=df.columns)
 
 def pie_not_achieved(df: pd.DataFrame):
@@ -173,10 +205,12 @@ if uploaded_files:
             continue
         try:
             df = read_csv_safely(f)
+            st.write(f"Columns detected: {list(df.columns)}")  # Debug info
             df = ensure_required_columns(df)
             countries_data[code].append(df)
         except Exception as e:
             st.error(f"Could not load file **{f.name}**: {e}")
+            st.error(f"Error details: {str(e)}")
 
 available_codes = [code for code, lst in countries_data.items() if len(lst) > 0]
 if not available_codes:
