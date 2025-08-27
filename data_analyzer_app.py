@@ -151,6 +151,11 @@ def format_pct(x):
         return ""
     return f"{x:.2f}%".replace(".", ",")
 
+def format_float(x):
+    if pd.isna(x):
+        return ""
+    return f"{x:.2f}".replace(".", ",")
+
 def style_expected_colors(df: pd.DataFrame):
     def color_row(row):
         val = row.get("% Expected Demand", np.nan)
@@ -188,6 +193,20 @@ def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
     if {"Demand", "Expected Demand"}.issubset(df.columns) and "Demand Diff to Expected" not in df.columns:
         df["Demand Diff to Expected"] = df["Demand"] - df["Expected Demand"]
     
+    # Ensure Demand Diff to Expected has correct sign based on % Expected Demand
+    if "Demand Diff to Expected" in df.columns and "% Expected Demand" in df.columns:
+        # If % Expected Demand is negative, make Demand Diff to Expected negative
+        df["Demand Diff to Expected"] = np.where(
+            df["% Expected Demand"] < 0, 
+            -abs(df["Demand Diff to Expected"]), 
+            abs(df["Demand Diff to Expected"])
+        )
+    
+    # Round all numeric columns to 2 decimal places
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        df[col] = df[col].round(2)
+    
     if "Demand" in df.columns:
         df = df.sort_values("Demand", ascending=False).reset_index(drop=True)
     
@@ -195,13 +214,23 @@ def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def styled_table(df: pd.DataFrame):
     styler = style_expected_colors(df)
-    currency_cols = [c for c in ["Demand", "Demand Diff to Expected", "Expected Demand", "AOV", "Median Order Value"] if c in df.columns]
-    percent_cols = [c for c in ["% Expected Demand", "CVR", "BA"] if c in df.columns]
+    
+    # Currency columns (Euro format)
+    currency_cols = [c for c in ["Demand", "Median Order Value", "Expected Demand", "Demand Diff to Expected", "AOV"] if c in df.columns]
+    
+    # Percentage columns
+    percent_cols = [c for c in ["% Expected Demand", "CVR", "BA", "CVR Category Avg Diff", "CVR Channel Avg Diff", "CVR Category by Channel Avg Diff"] if c in df.columns]
+    
+    # Other numeric columns (2 decimal places)
+    other_numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns 
+                         if c not in currency_cols and c not in percent_cols]
     
     if currency_cols:
         styler = styler.format({c: format_eur for c in currency_cols})
     if percent_cols:
         styler = styler.format({c: format_pct for c in percent_cols})
+    if other_numeric_cols:
+        styler = styler.format({c: format_float for c in other_numeric_cols})
     
     styler = styler.set_properties(**{"text-align": "right"})
     return styler
@@ -213,6 +242,11 @@ def add_summary_row(df: pd.DataFrame) -> pd.DataFrame:
     for col in numeric_cols:
         if col in df.columns:
             row[col] = df[col].mean(skipna=True)
+    
+    # Round summary values to 2 decimal places
+    for col in numeric_cols:
+        if col in row and pd.notna(row[col]):
+            row[col] = round(row[col], 2)
     
     if df.columns[0] not in ["", None]:
         row[df.columns[0]] = "Average"
