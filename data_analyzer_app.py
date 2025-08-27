@@ -32,7 +32,7 @@ def detect_country_from_filename(name: str) -> Optional[str]:
             return code
     return None
 
-def manual_csv_parsing(content: str) -> pd.DataFrame:
+def manual_csv_parsing(content: str, encoding: str = 'utf-8') -> pd.DataFrame:
     """Manual fallback parsing for problematic CSV files"""
     lines = content.strip().split('\n')
     headers = lines[0].strip().split('\t')
@@ -46,43 +46,72 @@ def manual_csv_parsing(content: str) -> pd.DataFrame:
     df = pd.DataFrame(data, columns=headers)
     return df
 
+def detect_encoding(content_bytes: bytes) -> str:
+    """Detect the encoding of the file content"""
+    encodings = ['utf-8-sig', 'utf-16', 'latin-1', 'iso-8859-1', 'windows-1252', 'utf-8']
+    
+    for encoding in encodings:
+        try:
+            content_bytes.decode(encoding)
+            return encoding
+        except UnicodeDecodeError:
+            continue
+    
+    return 'utf-8'  # fallback
+
 def read_csv_safely(file) -> pd.DataFrame:
-    # Read the file content
-    content = file.getvalue().decode('utf-8')
+    # Read the file as bytes first to detect encoding
+    content_bytes = file.getvalue()
+    file.seek(0)
+    
+    # Detect encoding
+    encoding = detect_encoding(content_bytes)
+    st.write(f"Detected encoding: {encoding}")
+    
+    # Decode content with correct encoding
+    try:
+        content = content_bytes.decode(encoding)
+    except UnicodeDecodeError:
+        # Fallback to latin-1 which rarely fails
+        content = content_bytes.decode('latin-1', errors='ignore')
     
     # For files with DE in name, use tab separator with European number format
     if "DE" in file.name.upper():
         try:
             # Read with tab separator and European number formatting
+            file.seek(0)
             df = pd.read_csv(
-                io.StringIO(content), 
+                io.BytesIO(content_bytes), 
                 sep='\t', 
                 thousands='.', 
                 decimal=',',
-                encoding='utf-8'
+                encoding=encoding
             )
             return df
         except Exception as e:
-            st.error(f"Error reading DE file: {e}")
+            st.error(f"Error reading DE file with pandas: {e}")
             # Fallback: manual parsing
-            return manual_csv_parsing(content)
+            return manual_csv_parsing(content, encoding)
     else:
         # For other countries, use original logic
-        sample = content[:2048]
-        sep_candidates = [",", ";", "\t", "|"]
-        best_sep = ","
-        best_hits = 0
-        for sep in sep_candidates:
-            hits = sample.count(sep)
-            if hits > best_hits:
-                best_hits = hits
-                best_sep = sep
-        
         try:
-            df = pd.read_csv(io.StringIO(content), sep=best_sep)
+            file.seek(0)
+            sample = content[:2048]
+            sep_candidates = [",", ";", "\t", "|"]
+            best_sep = ","
+            best_hits = 0
+            for sep in sep_candidates:
+                hits = sample.count(sep)
+                if hits > best_hits:
+                    best_hits = hits
+                    best_sep = sep
+            
+            file.seek(0)
+            df = pd.read_csv(io.BytesIO(content_bytes), sep=best_sep, encoding=encoding)
             return df
-        except:
-            return manual_csv_parsing(content)
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+            return manual_csv_parsing(content, encoding)
 
 def to_number(s):
     if pd.isna(s):
