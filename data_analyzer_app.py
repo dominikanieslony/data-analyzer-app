@@ -32,27 +32,57 @@ def detect_country_from_filename(name: str) -> Optional[str]:
             return code
     return None
 
-def read_csv_safely(file) -> pd.DataFrame:
-    # Read the file content
-    content = file.getvalue().decode('utf-8')
-    
-    # Manual parsing for tab-separated files
+def manual_csv_parsing(content: str) -> pd.DataFrame:
+    """Manual fallback parsing for problematic CSV files"""
     lines = content.strip().split('\n')
-    
-    # Get headers from first line
     headers = lines[0].strip().split('\t')
     
-    # Parse data rows
     data = []
     for line in lines[1:]:
         if line.strip():
             row = line.strip().split('\t')
             data.append(row)
     
-    # Create DataFrame
     df = pd.DataFrame(data, columns=headers)
-    
     return df
+
+def read_csv_safely(file) -> pd.DataFrame:
+    # Read the file content
+    content = file.getvalue().decode('utf-8')
+    
+    # For files with DE in name, use tab separator with European number format
+    if "DE" in file.name.upper():
+        try:
+            # Read with tab separator and European number formatting
+            df = pd.read_csv(
+                io.StringIO(content), 
+                sep='\t', 
+                thousands='.', 
+                decimal=',',
+                encoding='utf-8'
+            )
+            return df
+        except Exception as e:
+            st.error(f"Error reading DE file: {e}")
+            # Fallback: manual parsing
+            return manual_csv_parsing(content)
+    else:
+        # For other countries, use original logic
+        sample = content[:2048]
+        sep_candidates = [",", ";", "\t", "|"]
+        best_sep = ","
+        best_hits = 0
+        for sep in sep_candidates:
+            hits = sample.count(sep)
+            if hits > best_hits:
+                best_hits = hits
+                best_sep = sep
+        
+        try:
+            df = pd.read_csv(io.StringIO(content), sep=best_sep)
+            return df
+        except:
+            return manual_csv_parsing(content)
 
 def to_number(s):
     if pd.isna(s):
@@ -60,13 +90,12 @@ def to_number(s):
     if isinstance(s, (int, float, np.number)):
         return float(s)
     
-    # Handle string values
     s = str(s).strip()
     
     # Remove currency symbols, spaces, and percentage signs
     s = s.replace("€", "").replace(" ", "").replace("\xa0", "").replace("%", "")
     
-    # Handle European number format (20.265 -> 20265, 3,25 -> 3.25)
+    # Handle European number format
     if "." in s and "," in s:
         # Format like 20.265,50 -> 20265.50
         s = s.replace(".", "").replace(",", ".")
@@ -204,13 +233,8 @@ if uploaded_files:
         try:
             st.write(f"### Processing file: {f.name}")
             
-            # Read and display raw content for debugging
-            content = f.getvalue().decode('utf-8')
-            st.text_area("Raw file content (first 500 chars):", content[:500], height=150)
-            
             df = read_csv_safely(f)
             st.write("**Columns detected:**", list(df.columns))
-            st.write("**Data types:**", df.dtypes.to_dict())
             st.write("**First 2 rows:**")
             st.dataframe(df.head(2))
             
