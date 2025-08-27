@@ -168,6 +168,7 @@ def style_expected_colors(df: pd.DataFrame):
 def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
     # Clean column names
     df = df.rename(columns={c: c.strip() for c in df.columns})
+    st.write("🧹 Column names after cleaning:", list(df.columns))
     
     # Convert all potential numeric columns
     numeric_columns = [
@@ -179,36 +180,48 @@ def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
     
     for col in numeric_columns:
         if col in df.columns:
+            original_value = df[col].iloc[0] if len(df) > 0 else None
             df[col] = df[col].apply(to_number)
+            new_value = df[col].iloc[0] if len(df) > 0 else None
+            if original_value is not None:
+                st.write(f"🔢 {col}: {original_value} -> {new_value}")
     
     # Calculate missing columns
     if "% Expected Demand" not in df.columns and {"Demand", "Expected Demand"}.issubset(df.columns):
         with np.errstate(divide="ignore", invalid="ignore"):
             df["% Expected Demand"] = (df["Demand"] - df["Expected Demand"]) / df["Expected Demand"] * 100
+        st.write("📊 Calculated % Expected Demand")
     
     if "CVR" not in df.columns and {"Orders", "Visits"}.issubset(df.columns):
         with np.errstate(divide="ignore", invalid="ignore"):
             df["CVR"] = (df["Orders"] / df["Visits"]) * 100
+        st.write("📊 Calculated CVR")
     
     if {"Demand", "Expected Demand"}.issubset(df.columns) and "Demand Diff to Expected" not in df.columns:
         df["Demand Diff to Expected"] = df["Demand"] - df["Expected Demand"]
+        st.write("📊 Calculated Demand Diff to Expected")
     
     # Ensure Demand Diff to Expected has correct sign based on % Expected Demand
     if "Demand Diff to Expected" in df.columns and "% Expected Demand" in df.columns:
+        st.write("🔄 Correcting Demand Diff to Expected signs...")
         # If % Expected Demand is negative, make Demand Diff to Expected negative
         df["Demand Diff to Expected"] = np.where(
             df["% Expected Demand"] < 0, 
             -abs(df["Demand Diff to Expected"]), 
             abs(df["Demand Diff to Expected"])
         )
+        st.write("✅ Sign correction applied")
     
     # Round all numeric columns to 2 decimal places
+    st.write("🔢 Rounding all numeric columns to 2 decimal places...")
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     for col in numeric_cols:
         df[col] = df[col].round(2)
+    st.write("✅ Rounding completed")
     
     if "Demand" in df.columns:
         df = df.sort_values("Demand", ascending=False).reset_index(drop=True)
+        st.write("📊 Data sorted by Demand")
     
     return df
 
@@ -225,12 +238,19 @@ def styled_table(df: pd.DataFrame):
     other_numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns 
                          if c not in currency_cols and c not in percent_cols]
     
+    st.write("💰 Currency columns to format:", currency_cols)
+    st.write("📊 Percent columns to format:", percent_cols)
+    st.write("🔢 Other numeric columns to format:", other_numeric_cols)
+    
     if currency_cols:
         styler = styler.format({c: format_eur for c in currency_cols})
+        st.write("✅ Currency formatting applied")
     if percent_cols:
         styler = styler.format({c: format_pct for c in percent_cols})
+        st.write("✅ Percentage formatting applied")
     if other_numeric_cols:
         styler = styler.format({c: format_float for c in other_numeric_cols})
+        st.write("✅ Numeric formatting applied")
     
     styler = styler.set_properties(**{"text-align": "right"})
     return styler
@@ -298,10 +318,37 @@ if uploaded_files:
             
             df = read_csv_safely(f)
             st.write("**Columns detected:**", list(df.columns))
-            st.write("**First 2 rows:**")
+            st.write("**First 2 rows (raw):**")
             st.dataframe(df.head(2))
             
             df = ensure_required_columns(df)
+            
+            # Debug: Check if changes are applied
+            st.write("🔍 DEBUG: Checking if changes are applied")
+            st.write("Data types after processing:")
+            st.write(df.dtypes)
+
+            # Check specific columns
+            if "Demand Diff to Expected" in df.columns and "% Expected Demand" in df.columns:
+                st.write("💰 Checking Demand Diff to Expected signs:")
+                sample_data = df[["Demand", "Expected Demand", "Demand Diff to Expected", "% Expected Demand"]].head()
+                st.dataframe(sample_data)
+                
+                # Check if negative values are correctly handled
+                negative_mask = df["% Expected Demand"] < 0
+                st.write(f"📉 Rows with negative % Expected Demand: {negative_mask.sum()}")
+                if negative_mask.any():
+                    st.write("📉 Sample negative values:")
+                    negative_sample = df[negative_mask][["Demand Diff to Expected", "% Expected Demand"]].head()
+                    st.dataframe(negative_sample)
+
+            # Check rounding
+            st.write("🔢 Checking rounding (2 decimal places):")
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            for col in numeric_cols[:3]:  # Check first 3 numeric columns
+                if col in df.columns and len(df) > 0:
+                    st.write(f"{col}: {df[col].iloc[0]} (type: {type(df[col].iloc[0])})")
+            
             countries_data[code].append(df)
             
         except Exception as e:
